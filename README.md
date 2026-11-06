@@ -42,3 +42,14 @@ python cell_first_nuclei.py sample.png --output-dir results
 ```
 
 세포 마스크, 핵 마스크, 대비 향상 이미지, 핵 검출 표시 이미지가 각각 저장됩니다. 이 스크립트는 명암 경계 기반 휴리스틱입니다. 세포 경계가 흐리거나 서로 겹치면 여러 세포가 하나로 합쳐지거나 일부가 누락될 수 있습니다. 이런 이미지에서는 Canny 임계값과 윤곽의 최소 면적 기준을 조정해야 합니다.
+
+
+## HSV + watershed 검출 스크립트
+
+`watershed_nuclei.py`는 노트북의 노이즈 제거, 선명화, LAB-CLAHE, HSV 전처리를 이어서 사용합니다. heatmap 시각화는 제외하고 HSV로 세포 후보 영역을 만든 뒤, 거리 변환 watershed로 후보를 세포 영역으로 나눕니다. 각 영역 안에서 어둡고 둥근 핵 후보를 검출합니다.
+
+```bash
+../.venv/bin/python watershed_nuclei.py
+```
+
+결과는 `output_watershed/`에 저장됩니다. HSV 채도, 세포 후보 마스크, watershed 세포 라벨, 핵 마스크와 최종 오버레이를 확인할 수 있습니다. HSV 임계값과 면적·원형도 기준은 현재 입력 이미지에 맞춰져 있어 다른 염색 조건에서는 조정이 필요합니다.
