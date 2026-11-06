@@ -29,7 +29,7 @@
 
 ## 세포 영역 우선 검출 스크립트
 
-`cell_first_nuclei.py`는 LAB 색 공간의 세포 염색 영역을 먼저 추정한 뒤, 그 안에서만 어둡고 둥근 핵 후보를 찾습니다. 기본 입력은 `image.png`, `image2.png`이며 결과는 `output_cell_first/`에 저장됩니다.
+`cell_first_nuclei.py`는 회색조 명암을 보정한 뒤 세포 경계 윤곽을 찾아 크기와 모양으로 세포 영역을 추정하고, 그 안에서 어둡고 둥근 핵 후보를 찾습니다. 세포 분할은 염색 색상 임계값에 의존하지 않습니다. 기본 입력은 `image.png`, `image2.png`이며 결과는 `output_cell_first/`에 저장됩니다.
 
 ```bash
 python cell_first_nuclei.py
@@ -41,4 +41,4 @@ python cell_first_nuclei.py
 python cell_first_nuclei.py sample.png --output-dir results
 ```
 
-세포 마스크, 핵 마스크, 대비 향상 이미지, 핵 검출 표시 이미지가 각각 저장됩니다. 이 스크립트의 색상 기반 세포 분리는 현재 입력 이미지에 맞춘 휴리스틱이므로 염색 색상이나 조명이 다른 이미지에서는 `CELL_A_FLOOR`와 검출 임계값 조정이 필요할 수 있습니다.
+세포 마스크, 핵 마스크, 대비 향상 이미지, 핵 검출 표시 이미지가 각각 저장됩니다. 이 스크립트는 명암 경계 기반 휴리스틱입니다. 세포 경계가 흐리거나 서로 겹치면 여러 세포가 하나로 합쳐지거나 일부가 누락될 수 있습니다. 이런 이미지에서는 Canny 임계값과 윤곽의 최소 면적 기준을 조정해야 합니다.

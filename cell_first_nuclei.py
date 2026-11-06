@@ -4,9 +4,9 @@ Run from this folder with:
     python cell_first_nuclei.py
     python cell_first_nuclei.py image.png image2.png --output-dir output_cell_first
 
-Cell regions are estimated from the red-magenta channel in LAB color space.
-This is a color-based heuristic for the provided stained images; adjust
-CELL_A_FLOOR and the nucleus thresholds for images with different staining.
+Cell regions are estimated from grayscale boundary contours, then filtered
+by region size and shape. This is a classical vision heuristic: faint or
+occluded cell boundaries can still cause missed or merged cell regions.
 """
 
 import argparse
@@ -16,45 +16,56 @@ import cv2
 import numpy as np
 
 
-CELL_A_FLOOR = 132
 MIN_NUCLEUS_AREA = 220
 MAX_NUCLEUS_AREA = 6000
 
 
 def make_cell_mask(image):
-    """Estimate stained cell-body regions from LAB's red-green channel."""
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    a_channel = cv2.GaussianBlur(lab[:, :, 1], (0, 0), 3)
+    """Find cell-sized regions from grayscale boundaries and contour shape.
 
-    # Otsu adapts to each image; the floor keeps bluish/neutral background
-    # from being classified as cells in the supplied images.
-    otsu_threshold, _ = cv2.threshold(
-        a_channel, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    No stain-hue threshold is used here. CLAHE improves weak boundaries,
+    smoothing reduces internal texture edges, and closed contours are filled.
+    Size and aspect-ratio checks reject small debris and implausible regions.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(12, 12)).apply(gray)
+    gray = cv2.GaussianBlur(gray, (9, 9), 0)
+
+    # Detect outlines on normalized grayscale, independent of stain hue.
+    edges = cv2.Canny(gray, threshold1=25, threshold2=70)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+    outlines = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel)
+
+    contours, _ = cv2.findContours(
+        outlines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
-    threshold = max(int(otsu_threshold), CELL_A_FLOOR)
-    mask = cv2.threshold(a_channel, threshold, 255, cv2.THRESH_BINARY)[1]
+    height, width = gray.shape
+    image_area = height * width
+    min_cell_area = max(1500, int(image_area * 0.004))
+    max_cell_area = int(image_area * 0.35)
+    cell_mask = np.zeros_like(gray)
 
-    # Join small gaps in cell bodies, then remove isolated staining specks.
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
-    open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < min_cell_area or area > max_cell_area:
+            continue
 
-    # Keep cell-sized connected regions and fill internal holes (including
-    # dark nuclei), so the later nucleus search is not blocked by the mask.
-    height, width = mask.shape
-    min_cell_area = max(500, int(height * width * 0.00025))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    clean = np.zeros_like(mask)
-    for label in range(1, count):
-        area = stats[label, cv2.CC_STAT_AREA]
-        if area >= min_cell_area and area < height * width * 0.75:
-            clean[labels == label] = 255
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        aspect = box_width / max(box_height, 1)
+        if aspect < 0.35 or aspect > 2.8:
+            continue
 
-    contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    filled = np.zeros_like(clean)
-    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
-    return filled
+        hull_area = cv2.contourArea(cv2.convexHull(contour))
+        solidity = area / max(hull_area, 1.0)
+        if solidity < 0.35:
+            continue
+
+        cv2.drawContours(cell_mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+    # Close small gaps in accepted regions while preserving cell-scale shapes.
+    cell_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_CLOSE, cell_kernel)
+    return cell_mask
 
 
 def find_nuclei(image, cell_mask):
