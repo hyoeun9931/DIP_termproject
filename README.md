@@ -1,55 +1,20 @@
 # DIP Term Project
 
-현미경 이미지에서 세포핵 후보를 찾아 표시하는 디지털 영상처리 프로젝트입니다. `blackhat_nucleus_segmentation.ipynb`에서 노이즈 제거, 언샤프 마스킹, LAB 색 공간의 CLAHE 대비 향상, black-hat 기반 핵 분할을 순서대로 수행합니다. 분할된 영역은 면적과 원형도 기준으로 필터링하고, 결과 이미지에 초록색 윤곽선과 번호를 표시합니다.
+세포와 핵 분할 코드는 아래 두 파일을 참고하세요.
 
-## 실행 방법
+- [`blackhat_nucleus_segmentation.ipynb`](blackhat_nucleus_segmentation.ipynb): 노이즈 제거, 언샤프 마스킹, LAB-CLAHE, black-hat 기반 핵 마스크 생성
+- [`hsv_watershed_cell_nucleus_segmentation.py`](hsv_watershed_cell_nucleus_segmentation.py): HSV로 세포 후보를 찾고 watershed로 세포 영역을 나눈 뒤, 영역 안에서 핵 검출
 
-1. Python 환경을 준비하고 필요한 패키지를 설치합니다.
+## 실행
 
-   ```bash
-   pip install numpy opencv-python matplotlib jupyter
-   ```
-
-2. 입력 이미지 `image.png`, `image2.png`를 노트북과 같은 폴더에 둡니다. (이미지 파일은 저장소에 포함되어 있지 않습니다.)
-3. 노트북을 실행합니다.
-
-   ```bash
-   jupyter notebook blackhat_nucleus_segmentation.ipynb
-   ```
-
-4. 노트북의 셀을 위에서부터 실행합니다. 검출된 핵의 개수는 출력에 표시됩니다.
-
-## 결과물
-
-실행 결과는 `output/` 폴더에 저장됩니다. 입력별로 원본 비교 이미지, 노이즈 제거·선명화·대비 향상 이미지, HSV 시각화, black-hat 히트맵, 분할 마스크, 핵 표시 결과 이미지가 생성됩니다. 출력 파일명은 `<입력이름>_0_compare.png`부터 `<입력이름>_7_result.png` 형식입니다.
-
-## 참고
-
-검출 결과는 이미지의 배율과 촬영 조건에 따라 달라질 수 있습니다. 필요하면 노트북의 임계값, 면적 범위, 원형도 기준을 조정하세요.
-
-## 세포 영역 우선 검출 스크립트
-
-`cell_first_nuclei.py`는 회색조 명암을 보정한 뒤 세포 경계 윤곽을 찾아 크기와 모양으로 세포 영역을 추정하고, 그 안에서 어둡고 둥근 핵 후보를 찾습니다. 세포 분할은 염색 색상 임계값에 의존하지 않습니다. 기본 입력은 `image.png`, `image2.png`이며 결과는 `output_cell_first/`에 저장됩니다.
+노트북:
 
 ```bash
-python cell_first_nuclei.py
+jupyter notebook blackhat_nucleus_segmentation.ipynb
 ```
 
-다른 이미지를 지정하거나 저장 폴더를 바꾸려면 다음처럼 실행합니다.
-
-```bash
-python cell_first_nuclei.py sample.png --output-dir results
-```
-
-세포 마스크, 핵 마스크, 대비 향상 이미지, 핵 검출 표시 이미지가 각각 저장됩니다. 이 스크립트는 명암 경계 기반 휴리스틱입니다. 세포 경계가 흐리거나 서로 겹치면 여러 세포가 하나로 합쳐지거나 일부가 누락될 수 있습니다. 이런 이미지에서는 Canny 임계값과 윤곽의 최소 면적 기준을 조정해야 합니다.
-
-
-## HSV + watershed 검출 스크립트
-
-`hsv_watershed_cell_nucleus_segmentation.py`는 노트북의 노이즈 제거, 선명화, LAB-CLAHE, HSV 전처리를 이어서 사용합니다. heatmap 시각화는 제외하고 HSV로 세포 후보 영역을 만든 뒤, 거리 변환 watershed로 후보를 세포 영역으로 나눕니다. 각 영역 안에서 어둡고 둥근 핵 후보를 검출합니다.
+watershed 스크립트:
 
 ```bash
 ../.venv/bin/python hsv_watershed_cell_nucleus_segmentation.py
 ```
-
-결과는 `output_watershed/`에 저장됩니다. HSV 채도, 세포 후보 마스크, watershed 세포 라벨, 핵 마스크와 최종 오버레이를 확인할 수 있습니다. HSV 임계값과 면적·원형도 기준은 현재 입력 이미지에 맞춰져 있어 다른 염색 조건에서는 조정이 필요합니다.
