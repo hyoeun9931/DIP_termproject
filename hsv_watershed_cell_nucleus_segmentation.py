@@ -1,8 +1,8 @@
 """HSV candidate regions -> watershed cell segmentation -> nucleus detection.
 
-Uses the denoise, unsharp mask, LAB-CLAHE, and HSV steps from Nuclear.ipynb.
+Uses the denoise, unsharp mask, LAB-CLAHE, and HSV steps from blackhat_nucleus_segmentation.ipynb.
 The heatmap visualization is omitted. Run from this folder:
-    ../.venv/bin/python watershed_nuclei.py
+    ../.venv/bin/python hsv_watershed_cell_nucleus_segmentation.py
 """
 import argparse
 from pathlib import Path

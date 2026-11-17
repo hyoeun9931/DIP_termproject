@@ -1,6 +1,6 @@
 # DIP Term Project
 
-현미경 이미지에서 세포핵 후보를 찾아 표시하는 디지털 영상처리 프로젝트입니다. `Nuclear.ipynb`에서 노이즈 제거, 언샤프 마스킹, LAB 색 공간의 CLAHE 대비 향상, black-hat 기반 핵 분할을 순서대로 수행합니다. 분할된 영역은 면적과 원형도 기준으로 필터링하고, 결과 이미지에 초록색 윤곽선과 번호를 표시합니다.
+현미경 이미지에서 세포핵 후보를 찾아 표시하는 디지털 영상처리 프로젝트입니다. `blackhat_nucleus_segmentation.ipynb`에서 노이즈 제거, 언샤프 마스킹, LAB 색 공간의 CLAHE 대비 향상, black-hat 기반 핵 분할을 순서대로 수행합니다. 분할된 영역은 면적과 원형도 기준으로 필터링하고, 결과 이미지에 초록색 윤곽선과 번호를 표시합니다.
 
 ## 실행 방법
 
@@ -14,7 +14,7 @@
 3. 노트북을 실행합니다.
 
    ```bash
-   jupyter notebook Nuclear.ipynb
+   jupyter notebook blackhat_nucleus_segmentation.ipynb
    ```
 
 4. 노트북의 셀을 위에서부터 실행합니다. 검출된 핵의 개수는 출력에 표시됩니다.
@@ -46,10 +46,10 @@ python cell_first_nuclei.py sample.png --output-dir results
 
 ## HSV + watershed 검출 스크립트
 
-`watershed_nuclei.py`는 노트북의 노이즈 제거, 선명화, LAB-CLAHE, HSV 전처리를 이어서 사용합니다. heatmap 시각화는 제외하고 HSV로 세포 후보 영역을 만든 뒤, 거리 변환 watershed로 후보를 세포 영역으로 나눕니다. 각 영역 안에서 어둡고 둥근 핵 후보를 검출합니다.
+`hsv_watershed_cell_nucleus_segmentation.py`는 노트북의 노이즈 제거, 선명화, LAB-CLAHE, HSV 전처리를 이어서 사용합니다. heatmap 시각화는 제외하고 HSV로 세포 후보 영역을 만든 뒤, 거리 변환 watershed로 후보를 세포 영역으로 나눕니다. 각 영역 안에서 어둡고 둥근 핵 후보를 검출합니다.
 
 ```bash
-../.venv/bin/python watershed_nuclei.py
+../.venv/bin/python hsv_watershed_cell_nucleus_segmentation.py
 ```
 
 결과는 `output_watershed/`에 저장됩니다. HSV 채도, 세포 후보 마스크, watershed 세포 라벨, 핵 마스크와 최종 오버레이를 확인할 수 있습니다. HSV 임계값과 면적·원형도 기준은 현재 입력 이미지에 맞춰져 있어 다른 염색 조건에서는 조정이 필요합니다.
