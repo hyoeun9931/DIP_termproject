@@ -53,3 +53,11 @@ python cell_first_nuclei.py sample.png --output-dir results
 ```
 
 결과는 `output_watershed/`에 저장됩니다. HSV 채도, 세포 후보 마스크, watershed 세포 라벨, 핵 마스크와 최종 오버레이를 확인할 수 있습니다. HSV 임계값과 면적·원형도 기준은 현재 입력 이미지에 맞춰져 있어 다른 염색 조건에서는 조정이 필요합니다.
+
+## 승연·정환 핵 분할 및 세포질 측정 기준
+
+[`seungyeon_jeonghwan_nucleus_segmentation.py`](seungyeon_jeonghwan_nucleus_segmentation.py)는 학습 모델 없이 영상처리 규칙으로 핵 후보를 찾고, GrabCut으로 세포 영역과 세포질 마스크를 추정합니다. 이후 세포질 측정 기능을 통합할 기준 파일은 이 파일로 사용합니다. `jh.py`는 이 통합 작업의 기준으로 사용하지 않습니다.
+
+```bash
+python seungyeon_jeonghwan_nucleus_segmentation.py --images path/to/image.bmp --output output/cytoplasm
+```
