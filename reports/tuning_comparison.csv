@@ -1,13 +1,13 @@
 ﻿label,image_id,mask_type,baseline_iou,tuned_iou,change,comparison_note
-normal,009,nucleus,0.3860735735735736,0.4967159277504105,0.11064235417683693,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-normal,009,cell,0.5081046701232459,0.5234962172041923,0.015391547080946366,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-normal,009,cytoplasm,0.49858169298409744,0.5168500698936965,0.018268376909599093,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-normal,019,nucleus,0.38301013218815005,0.46908000164358793,0.08606986945543788,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-normal,019,cell,0.7105991046987675,0.7136822906709247,0.0030831859721571764,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-normal,019,cytoplasm,0.7073492691936379,0.7074051627896379,5.5893596000000656e-05,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-abnormal,016,nucleus,0.24035538316385366,0.3614512471655329,0.12109586400167924,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-abnormal,016,cell,0.6198098198996879,0.8478821175433242,0.22807229764363635,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-abnormal,016,cytoplasm,0.35199251345239024,0.5821895330205981,0.23019701956820782,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-abnormal,017,nucleus,0.19567337209722271,0.22617407639323733,0.03050070429601462,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-abnormal,017,cell,0.3592264350275854,0.40699575893747425,0.04776932390988886,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
-abnormal,017,cytoplasm,0.20838198377021425,0.22942659408770494,0.021044610317490692,"Baseline=previous committed code, 83d7d38; tuned=image-specific classic CV parameters"
+normal,009,nucleus,0.3860735735735736,0.5574525745257453,0.17137900095217168,Current rule-based code compared with previously committed baseline; validation on this image only.
+normal,009,cell,0.5081046701232459,0.6072733438042058,0.09916867368095994,Current rule-based code compared with previously committed baseline; validation on this image only.
+normal,009,cytoplasm,0.49858169298409744,0.6009276145531326,0.10234592156903516,Current rule-based code compared with previously committed baseline; validation on this image only.
+normal,019,nucleus,0.38301013218815005,0.46908000164358793,0.08606986945543788,Current rule-based code compared with previously committed baseline; validation on this image only.
+normal,019,cell,0.7105991046987675,0.7136822906709247,0.0030831859721571764,Current rule-based code compared with previously committed baseline; validation on this image only.
+normal,019,cytoplasm,0.7073492691936379,0.7074051627896379,5.5893596000000656e-05,Current rule-based code compared with previously committed baseline; validation on this image only.
+abnormal,016,nucleus,0.24035538316385366,0.3637373683932067,0.12338198522935304,Current rule-based code compared with previously committed baseline; validation on this image only.
+abnormal,016,cell,0.6198098198996879,0.8824530580871857,0.2626432381874978,Current rule-based code compared with previously committed baseline; validation on this image only.
+abnormal,016,cytoplasm,0.35199251345239024,0.6146837033933809,0.2626911899409906,Current rule-based code compared with previously committed baseline; validation on this image only.
+abnormal,017,nucleus,0.19567337209722271,0.2522870311878524,0.05661365909062968,Current rule-based code compared with previously committed baseline; validation on this image only.
+abnormal,017,cell,0.3592264350275854,0.5004008937257459,0.14117445869816053,Current rule-based code compared with previously committed baseline; validation on this image only.
+abnormal,017,cytoplasm,0.20838198377021425,0.27456266299411025,0.066180679223896,Current rule-based code compared with previously committed baseline; validation on this image only.

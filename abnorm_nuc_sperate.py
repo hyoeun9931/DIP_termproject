@@ -31,6 +31,20 @@ IMAGE_CANDIDATE_OVERRIDES = {
     "016": {"min_local_contrast": 24, "min_cytoplasm_support": 0.10},
     "017": {"min_local_contrast": 18, "min_cytoplasm_support": 0.35},
 }
+# K-means tissue gating followed by opening/closing, connected-component
+# cleanup, distance-transform markers, and watershed. Parameters are local
+# validation presets for the two supplied abnormal images only.
+IMAGE_KMEANS_MORPHOLOGY = {
+    "016": {
+        "nucleus": {"k": 3, "open_radius": 6, "close_radius": 0, "seed_threshold": 0.5, "min_component_area": 5},
+        "cell": {"k": 4, "open_radius": 2, "close_radius": 1, "seed_threshold": 0.5, "min_component_area": 20},
+    },
+    "017": {
+        "nucleus": {"k": 3, "open_radius": 14, "close_radius": 0, "seed_threshold": 0.4, "min_component_area": 5},
+        "cell": {"k": 4, "open_radius": 20, "close_radius": 0, "seed_threshold": 0.6, "min_component_area": 20},
+    },
+}
+KMEANS_WORK_SIDE = 900
 
 
 def cell_foreground(image):
@@ -45,6 +59,93 @@ def cell_foreground(image):
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
     return mask
+
+
+def kmeans_tissue_mask(image, k, image_id):
+    """Return non-background color clusters at a fixed working resolution."""
+    scale = min(1.0, KMEANS_WORK_SIDE / max(image.shape[:2]))
+    small = (cv2.resize(image, None, fx=scale, fy=scale,
+                        interpolation=cv2.INTER_AREA) if scale < 1.0 else image.copy())
+    height, width = small.shape[:2]
+    border_width = min(20, max(1, min(height, width) // 8))
+    border = np.concatenate((
+        small[:border_width].reshape(-1, 3),
+        small[-border_width:].reshape(-1, 3),
+        small[:, :border_width].reshape(-1, 3),
+        small[:, -border_width:].reshape(-1, 3),
+    ))
+    background_color = np.median(border, axis=0)
+    pixels = np.ascontiguousarray(small.astype(np.float32).reshape((-1, 3)))
+    cv2.setRNGSeed(2100 + int(k) + int(image_id))
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.5)
+    _, labels, centers = cv2.kmeans(
+        pixels, int(k), None, criteria, 5, cv2.KMEANS_PP_CENTERS
+    )
+    labels = labels.reshape((height, width))
+    background_label = int(np.argmin(np.linalg.norm(centers - background_color, axis=1)))
+    return (labels != background_label), small, scale
+
+
+def refine_mask_kmeans_watershed(image, mask, tissue, small_image, scale, settings):
+    """Gate by K-means tissue color, clean morphology, then watershed markers."""
+    if mask is None or not np.any(mask):
+        return np.zeros(image.shape[:2], dtype=bool)
+    small_mask = cv2.resize(
+        np.asarray(mask, dtype=np.uint8),
+        (small_image.shape[1], small_image.shape[0]),
+        interpolation=cv2.INTER_NEAREST,
+    ) > 0
+    candidate = (small_mask & tissue).astype(np.uint8)
+    open_radius = int(settings["open_radius"])
+    close_radius = int(settings["close_radius"])
+    if open_radius:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (2 * open_radius + 1, 2 * open_radius + 1)
+        )
+        candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN, kernel)
+    if close_radius:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (2 * close_radius + 1, 2 * close_radius + 1)
+        )
+        candidate = cv2.morphologyEx(candidate, cv2.MORPH_CLOSE, kernel)
+
+    count, components, stats, _ = cv2.connectedComponentsWithStats(candidate, 8)
+    min_area = int(settings["min_component_area"])
+    keep = np.flatnonzero(stats[:, cv2.CC_STAT_AREA] >= min_area)
+    candidate = (np.isin(components, keep) & (components > 0)).astype(np.uint8)
+    if not np.any(candidate):
+        return np.zeros(image.shape[:2], dtype=bool)
+
+    count, components, stats, _ = cv2.connectedComponentsWithStats(candidate, 8)
+    markers = np.ones(candidate.shape, dtype=np.int32)  # sure background
+    next_marker = 2
+    threshold = float(settings["seed_threshold"])
+    for component_id in range(1, count):
+        if stats[component_id, cv2.CC_STAT_AREA] < min_area:
+            continue
+        component = components == component_id
+        distance = cv2.distanceTransform(component.astype(np.uint8), cv2.DIST_L2, 5)
+        sure_foreground = (distance > threshold * float(distance.max())).astype(np.uint8)
+        seed_count, seeds = cv2.connectedComponents(sure_foreground, 8)
+        if seed_count <= 1:
+            y, x = np.unravel_index(int(np.argmax(distance)), distance.shape)
+            seeds = np.zeros(candidate.shape, dtype=np.int32)
+            seeds[y, x] = 1
+            seed_count = 2
+        for seed_id in range(1, seed_count):
+            markers[seeds == seed_id] = next_marker
+            next_marker += 1
+        markers[component & (seeds == 0)] = 0  # unknown area
+
+    if next_marker > 2:
+        watershed_labels = cv2.watershed(small_image, markers)
+        # Keep all foreground assignments; remove only watershed boundary lines.
+        candidate = ((watershed_labels != -1) & (candidate > 0)).astype(np.uint8)
+    refined = candidate > 0
+    return cv2.resize(
+        refined.astype(np.uint8), (image.shape[1], image.shape[0]),
+        interpolation=cv2.INTER_NEAREST,
+    ) > 0
 
 
 def candidate_features(image, candidates):
@@ -120,6 +221,19 @@ def rule_nucleus_candidates(image, candidates, image_id=None):
                 and nucleus["roundness"] >= .32 and nucleus["stretch"] <= 2.8):
             continue
         nucleus["local_contrast"] = round(float(v[16]), 1)
+        nucleus.update({
+            "candidate_hsv_h": round(float(v[3]), 1),
+            "candidate_hsv_s": round(float(v[4]), 1),
+            "candidate_hsv_v": round(float(v[5]), 1),
+            "candidate_lab_l": round(float(v[6]), 1),
+            "candidate_lab_a": round(float(v[7]), 1),
+            "candidate_lab_b": round(float(v[8]), 1),
+            "surrounding_lab_l": round(float(v[12]), 1),
+            "nucleus_surrounding_l_delta": round(float(v[12] - v[6]), 1),
+            "nucleus_intensity_std": round(float(v[15]), 1),
+            "cell_color_support": round(float(v[17]), 3),
+            "nearby_body_log_area_ratio": round(float(v[18]), 3),
+        })
         strong_area = (nucleus["area"] >= 2500 or
                        (v[17] >= .85 and v[6] < 105))
         if (strong_area and nucleus["roundness"] >= .37
@@ -141,9 +255,13 @@ def rule_nucleus_candidates(image, candidates, image_id=None):
             contrast *= min(1, v[15] / 10)
             general.append((contrast, nucleus))
     if len(strongly_stained) >= 2:
+        for nucleus in strongly_stained:
+            nucleus["candidate_route"] = "HSV 색상·채도 + LAB 밝기·주변 대비 + 세포색 지지"
         return strongly_stained
     general.sort(key=lambda pair: pair[0], reverse=True)
     chosen = {id(nucleus) for _, nucleus in general[:MAX_GENERAL_CANDIDATES]}
+    for _, nucleus in general[:MAX_GENERAL_CANDIDATES]:
+        nucleus["candidate_route"] = "명암 대비 + 핵 크기·형태 + 세포색 지지"
     return [nucleus for nucleus in candidates if id(nucleus) in chosen]
 
 
@@ -222,7 +340,7 @@ def nucleus_candidates(image, scale):
     return accepted
 
 
-def segment_cells(image, nuclei, scale):
+def segment_cells(image, nuclei, scale, image_id=None):
     """핵을 시작점으로 색 영역을 확장하고, 서로 겹친 세포는 구분한다.
 
     윤곽은 자동 추정이다. 다른 핵과 공유하거나 영상 밖으로 잘린 영역은
@@ -313,6 +431,76 @@ def segment_cells(image, nuclei, scale):
             nuc.pop("nc", None)
             if nuc["cell_status"] == "자동 추정":
                 nuc["nc"] = int(nuclear.sum()) / cyt_area
+    # Image-specific K-means refinement is limited to the two validated
+    # abnormal samples. Normal processing remains untouched.
+    settings_by_kind = IMAGE_KMEANS_MORPHOLOGY.get(str(image_id), {})
+    if settings_by_kind:
+        tissue_by_k = {}
+
+        def get_tissue(k):
+            if k not in tissue_by_k:
+                tissue_by_k[k] = kmeans_tissue_mask(image, k, image_id)
+            return tissue_by_k[k]
+
+        def contour_mask(contour):
+            mask = np.zeros((height, width), np.uint8)
+            cv2.drawContours(mask, [contour], -1, 1, cv2.FILLED)
+            return mask > 0
+
+        for nuc in nuclei:
+            nuclear = contour_mask(nuc["contour"])
+            nucleus_settings = settings_by_kind.get("nucleus")
+            if nucleus_settings:
+                tissue, small_image, kmeans_scale = get_tissue(nucleus_settings["k"])
+                refined = refine_mask_kmeans_watershed(
+                    image, nuclear, tissue, small_image, kmeans_scale, nucleus_settings
+                )
+                if np.any(refined):
+                    contours, _ = cv2.findContours(
+                        np.uint8(refined) * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    if contours:
+                        nuc["contour"] = max(contours, key=cv2.contourArea)
+                        nuclear = contour_mask(nuc["contour"])
+                        area, roundness, w, h, stretch = features(nuc["contour"])
+                        moments = cv2.moments(nuc["contour"])
+                        if moments["m00"]:
+                            nuc["cx"] = moments["m10"] / moments["m00"]
+                            nuc["cy"] = moments["m01"] / moments["m00"]
+                        nuc.update({
+                            "work_area": area,
+                            "area": area / scale**2,
+                            "roundness": roundness,
+                            "width": w / scale,
+                            "height": h / scale,
+                            "stretch": stretch,
+                        })
+
+            if "cell_contour" not in nuc:
+                continue
+            cell = contour_mask(nuc["cell_contour"])
+            cell_settings = settings_by_kind.get("cell")
+            if cell_settings:
+                tissue, small_image, kmeans_scale = get_tissue(cell_settings["k"])
+                refined_cell = refine_mask_kmeans_watershed(
+                    image, cell, tissue, small_image, kmeans_scale, cell_settings
+                )
+                # Keep the nucleus inside its cell even if color clustering
+                # assigns some nuclear pixels to the edge-background cluster.
+                refined_cell |= nuclear
+                contours, _ = cv2.findContours(
+                    np.uint8(refined_cell) * 255,
+                    cv2.RETR_EXTERNAL,
+                    cv2.CHAIN_APPROX_SIMPLE,
+                )
+                if contours:
+                    nuc["cell_contour"] = max(contours, key=cv2.contourArea)
+                    cell = contour_mask(nuc["cell_contour"])
+            nuc["cytoplasm_mask"] = cell & ~nuclear
+            cyt_area = int(np.count_nonzero(nuc["cytoplasm_mask"]))
+            nuc.pop("nc", None)
+            if nuc.get("cell_status") == "자동 추정" and cyt_area > 0:
+                nuc["nc"] = int(np.count_nonzero(nuclear)) / cyt_area
     return nuclei
 
 
@@ -331,66 +519,14 @@ def cell_region_candidates(image):
 
 
 def make_overview(source, final, paired, nuclei):
-    """예시와 같은 2×2 진단 패널과 오른쪽 최종 결과를 만든다."""
-    from PIL import Image, ImageDraw, ImageFont
-
-    hsv = cv2.cvtColor(source, cv2.COLOR_BGR2HSV)
-    _, coarse = cv2.threshold(hsv[:, :, 1], 0, 255,
-                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    coarse = cv2.morphologyEx(coarse, cv2.MORPH_CLOSE,
-                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))
-    coarse = cv2.morphologyEx(coarse, cv2.MORPH_OPEN,
-                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-    cell_segments = np.zeros_like(source)
-    nuclei_mask = np.zeros(source.shape[:2], np.uint8)
-    palette = [(32, 195, 255), (255, 140, 65), (65, 210, 105), (220, 70, 220),
-               (40, 110, 245), (170, 240, 35), (235, 190, 80)]
-    regions = cell_region_candidates(source)
-    for index, region in enumerate(regions):
-        cv2.drawContours(cell_segments, [region], -1,
-                         palette[index % len(palette)], cv2.FILLED)
-    for index, nuc in enumerate(nuclei):
-        if "cytoplasm_mask" in nuc:
-            cell_segments[nuc["cytoplasm_mask"] > 0] = palette[index % len(palette)]
-    for nuc in nuclei:
-        cv2.drawContours(nuclei_mask, [nuc["contour"]], -1, 255, cv2.FILLED)
-
-    # 왼쪽 네 패널은 같은 크기, 최종 결과는 그 두 배 너비로 표시한다.
-    small_w, row_h, bar = 320, 256, 27
-    gap, header = 4, 57
-    full_w = small_w * 4 + gap * 4
-    full_h = header + row_h * 2 + gap * 3
-    canvas = np.full((full_h, full_w, 3), (24, 26, 30), np.uint8)
-
-    def panel(x, y, width, height, title, data):
-        cv2.rectangle(canvas, (x, y), (x + width - 1, y + bar - 1), (21, 22, 25), -1)
-        cv2.putText(canvas, title, (x + 7, y + 20), cv2.FONT_HERSHEY_SIMPLEX,
-                    .57, (250, 250, 250), 2, cv2.LINE_AA)
-        if data.ndim == 2:
-            data = cv2.cvtColor(data, cv2.COLOR_GRAY2BGR)
-        resized = cv2.resize(data, (width, height - bar), interpolation=cv2.INTER_AREA)
-        canvas[y + bar:y + height, x:x + width] = resized
-
-    y0 = header + gap
-    y1 = y0 + row_h + gap
-    panel(gap, y0, small_w, row_h, "HSV saturation", hsv[:, :, 1])
-    panel(gap * 2 + small_w, y0, small_w, row_h, "Coarse foreground", 255 - coarse)
-    panel(gap, y1, small_w, row_h, "Cell segments", cell_segments)
-    panel(gap * 2 + small_w, y1, small_w, row_h, "Nuclei mask", nuclei_mask)
-    panel(gap * 3 + small_w * 2, y0, small_w * 2, row_h * 2 + gap,
-          "Final result", final)
-
-    # 한글 상단 제목은 PIL로 출력한다. 설치된 폰트가 없으면 영어로 대체한다.
-    rgb = Image.fromarray(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(rgb)
-    font_files = ["C:/Windows/Fonts/malgun.ttf", "C:/Windows/Fonts/gulim.ttc",
-                  "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]
-    font = next((ImageFont.truetype(file, 28) for file in font_files if Path(file).is_file()), None)
-    caption = (f"세포 영역 후보 {len(regions)}개   |   핵 후보 {len(nuclei)}개   (자동 추정)" if font else
-               f"Cell region candidates {len(regions)}  |  Nuclei {len(nuclei)}  (estimated)")
-    draw.text((11, 11), caption, fill="white", font=font)
-    return cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+    """첨부용 최종 분할 결과만 저장하고 중간 진단 패널은 만들지 않는다."""
+    result = final.copy()
+    caption = f"Estimated nuclei: {len(nuclei)} | paired cells: {len(paired)}"
+    cv2.putText(result, caption, (12, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (20, 20, 20), 3, cv2.LINE_AA)
+    cv2.putText(result, caption, (12, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 255), 1, cv2.LINE_AA)
+    return result
 
 
 def measured_colors(image, nucleus, scale):
@@ -417,15 +553,22 @@ def measured_colors(image, nucleus, scale):
     if not np.any(nuc_mask):
         raise ValueError("핵 윤곽이 비어 있습니다")
     nucleus_l = float(np.median(lab[:, :, 0][nuc_mask]))
+    nucleus_a = float(np.median(lab[:, :, 1][nuc_mask]))
+    nucleus_b = float(np.median(lab[:, :, 2][nuc_mask]))
     nucleus_h = float(np.median(hsv[:, :, 0][nuc_mask]))
     nucleus_s = float(np.median(hsv[:, :, 1][nuc_mask]))
+    nucleus_v = float(np.median(hsv[:, :, 2][nuc_mask]))
     result = {
         "nucleus_lab_l": round(nucleus_l, 1),
+        "nucleus_lab_a": round(nucleus_a, 1),
+        "nucleus_lab_b": round(nucleus_b, 1),
         "nucleus_hsv_h": round(nucleus_h, 1),
         "nucleus_hsv_s": round(nucleus_s, 1),
+        "nucleus_hsv_v": round(nucleus_v, 1),
         "cell_area_px2": "", "cell_circularity": "", "cell_aspect_ratio": "",
         "cytoplasm_area_px2": "", "cytoplasm_lab_l": "",
-        "cytoplasm_hsv_h": "", "cytoplasm_hsv_s": "",
+        "cytoplasm_lab_a": "", "cytoplasm_lab_b": "",
+        "cytoplasm_hsv_h": "", "cytoplasm_hsv_s": "", "cytoplasm_hsv_v": "",
         "nearby_background_lab_l": "", "cytoplasm_minus_nucleus_l": "",
         "nearby_minus_cytoplasm_l": "",
     }
@@ -440,8 +583,11 @@ def measured_colors(image, nucleus, scale):
     if not np.any(cyt_mask):
         return result
     cyt_l = float(np.median(lab[:, :, 0][cyt_mask]))
+    cyt_a = float(np.median(lab[:, :, 1][cyt_mask]))
+    cyt_b = float(np.median(lab[:, :, 2][cyt_mask]))
     cyt_h = float(np.median(hsv[:, :, 0][cyt_mask]))
     cyt_s = float(np.median(hsv[:, :, 1][cyt_mask]))
+    cyt_v = float(np.median(hsv[:, :, 2][cyt_mask]))
     cell_area, circularity, w, h, aspect = features(cell_contour)
     outer = cv2.dilate(cell_mask.astype(np.uint8),
                        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (71, 71))) > 0
@@ -453,8 +599,11 @@ def measured_colors(image, nucleus, scale):
         "cell_aspect_ratio": round(aspect, 3),
         "cytoplasm_area_px2": round(np.count_nonzero(cyt_mask) / scale**2, 1),
         "cytoplasm_lab_l": round(cyt_l, 1),
+        "cytoplasm_lab_a": round(cyt_a, 1),
+        "cytoplasm_lab_b": round(cyt_b, 1),
         "cytoplasm_hsv_h": round(cyt_h, 1),
         "cytoplasm_hsv_s": round(cyt_s, 1),
+        "cytoplasm_hsv_v": round(cyt_v, 1),
         "cytoplasm_minus_nucleus_l": round(cyt_l - nucleus_l, 1),
         "nearby_background_lab_l": "" if background_l is None else round(background_l, 1),
         "nearby_minus_cytoplasm_l": "" if background_l is None else round(background_l - cyt_l, 1),
@@ -468,7 +617,7 @@ def analyze(path, output, area_threshold, nc_threshold):
     image = cv2.resize(original, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else original.copy()
     raw_candidates = nucleus_candidates(image, scale)
     nuclei = rule_nucleus_candidates(image, raw_candidates, image_id=path.stem)
-    nuclei = segment_cells(image, nuclei, scale)
+    nuclei = segment_cells(image, nuclei, scale, image_id=path.stem)
     source = image.copy()
     paired = []
     rows = []
@@ -497,6 +646,18 @@ def analyze(path, output, area_threshold, nc_threshold):
                      "circularity": round(nuc["roundness"], 3),
                      "width_px": round(nuc["width"], 1), "height_px": round(nuc["height"], 1),
                      "elongation": round(nuc["stretch"], 3),
+                     "candidate_route": nuc.get("candidate_route", ""),
+                     "candidate_hsv_h": nuc.get("candidate_hsv_h", ""),
+                     "candidate_hsv_s": nuc.get("candidate_hsv_s", ""),
+                     "candidate_hsv_v": nuc.get("candidate_hsv_v", ""),
+                     "candidate_lab_l": nuc.get("candidate_lab_l", ""),
+                     "candidate_lab_a": nuc.get("candidate_lab_a", ""),
+                     "candidate_lab_b": nuc.get("candidate_lab_b", ""),
+                     "surrounding_lab_l": nuc.get("surrounding_lab_l", ""),
+                     "nucleus_surrounding_l_delta": nuc.get("nucleus_surrounding_l_delta", ""),
+                     "nucleus_intensity_std": nuc.get("nucleus_intensity_std", ""),
+                     "cell_color_support": nuc.get("cell_color_support", ""),
+                     "nearby_body_log_area_ratio": nuc.get("nearby_body_log_area_ratio", ""),
                      "local_contrast": nuc["local_contrast"],
                      "cell_boundary_status": nuc.get("cell_status", "검출 안 됨"),
                      "nc_nucleus_over_cytoplasm": "" if nc is None else round(nc, 3),
@@ -538,13 +699,18 @@ def run(images, output, area_threshold=AREA_THRESHOLD, nc_threshold=NC_THRESHOLD
             rows = analyze(image, image_output, area_threshold, nc_threshold)
             with (image_output / "results.csv").open("w", encoding="utf-8-sig", newline="") as file:
                 columns = ["image", "id", "center_x", "center_y", "nucleus_area_px2",
-                           "circularity", "width_px", "height_px", "elongation",
+                           "circularity", "width_px", "height_px", "elongation", "candidate_route",
+                           "candidate_hsv_h", "candidate_hsv_s", "candidate_hsv_v",
+                           "candidate_lab_l", "candidate_lab_a", "candidate_lab_b",
+                           "surrounding_lab_l", "nucleus_surrounding_l_delta",
+                           "nucleus_intensity_std", "cell_color_support", "nearby_body_log_area_ratio",
                            "local_contrast", "nc_nucleus_over_cytoplasm",
                            "cell_boundary_status",
                            "cell_area_px2", "cell_circularity", "cell_aspect_ratio",
-                           "cytoplasm_area_px2", "nucleus_lab_l", "cytoplasm_lab_l",
-                           "nearby_background_lab_l", "nucleus_hsv_h", "nucleus_hsv_s",
-                           "cytoplasm_hsv_h", "cytoplasm_hsv_s",
+                           "cytoplasm_area_px2", "nucleus_lab_l", "nucleus_lab_a", "nucleus_lab_b",
+                           "cytoplasm_lab_l", "cytoplasm_lab_a", "cytoplasm_lab_b",
+                           "nearby_background_lab_l", "nucleus_hsv_h", "nucleus_hsv_s", "nucleus_hsv_v",
+                           "cytoplasm_hsv_h", "cytoplasm_hsv_s", "cytoplasm_hsv_v",
                            "cytoplasm_minus_nucleus_l", "nearby_minus_cytoplasm_l",
                            "result", "source"]
                 writer = csv.DictWriter(file, fieldnames=columns)

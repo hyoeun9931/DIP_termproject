@@ -253,7 +253,7 @@ def predict_abnormal(path: Path) -> tuple[dict, tuple[int, int]]:
     candidates = abnorm.rule_nucleus_candidates(
         work, abnorm.nucleus_candidates(work, scale), image_id=path.stem
     )
-    nuclei = abnorm.segment_cells(work, candidates, scale)
+    nuclei = abnorm.segment_cells(work, candidates, scale, image_id=path.stem)
     output = {"nucleus": [], "cell": [], "cytoplasm": []}
     target_size = (source_shape[1], source_shape[0])
     for identity, item in enumerate(nuclei, start=1):

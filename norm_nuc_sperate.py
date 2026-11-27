@@ -145,6 +145,11 @@ REFERENCE_IMAGE_DIR = BASE_DIR / 'reference_images'
 NUCLEUS_DISTANCE_SIGMA = 1.0
 NUCLEUS_PEAK_PROMINENCE = 1.5
 MIN_NUCLEUS_SEED_AREA = 1
+# Rule-based confidence checks: weak local brightness contrast or a nearly
+# achromatic candidate with weak contrast is rejected. These are pixel rules,
+# not learned weights.
+MIN_NUCLEUS_LAB_CONTRAST = 12.0
+MIN_HSV_NUCLEUS_COLOR_SUPPORT = 0.10
 # Four-image validation experiment presets. These are hand-tuned classic
 # image-processing parameters for the named samples only, not learned weights.
 IMAGE_SEGMENTATION_OVERRIDES = {
@@ -346,8 +351,12 @@ def preprocess_image(image):
         body_mask,
     )
 
+    lab_light = cv.cvtColor(image, cv.COLOR_BGR2LAB)[:, :, 0]
+
     return {
         "gray": gray,
+        "hsv": hsv,
+        "lab_light": lab_light,
         "cell_body_mask": body_mask,
         "mask_pink": pink,
         "mask_blue": blue,
@@ -1631,12 +1640,14 @@ def main():
 
 def segment_image(preprocessed, image_id=None):
     gray=preprocessed['gray']
+    hsv=preprocessed['hsv']
+    lab_light=preprocessed['lab_light']
     body=preprocessed['cell_body_mask']>0
     body_labels=measure.label(body)
     nuclei=np.zeros(gray.shape,dtype=np.int32)
     next_label=1
     split_components=0
-    rejected_small=rejected_large=rejected_ring=0
+    rejected_small=rejected_large=rejected_ring=rejected_weak_signal=0
     seed_counts={}
     split_labels=set()
     selem=morphology.disk(MORPH_DISK_RADIUS)
@@ -1714,6 +1725,23 @@ def segment_image(preprocessed, image_id=None):
                 if not ring.any() or np.mean(surrounding[ring])<MIN_SURROUNDING_BODY_RATIO:
                     rejected_ring+=1
                     continue
+                local_lab = lab_light[y0:y1, x0:x1]
+                local_hsv = hsv[y0:y1, x0:x1]
+                nucleus_light = float(np.median(local_lab[patch]))
+                ring_light = float(np.median(local_lab[ring]))
+                local_contrast = ring_light - nucleus_light
+                hue = local_hsv[:, :, 0]
+                saturation = local_hsv[:, :, 1]
+                nuclear_color = ((hue >= 80) & (hue <= 179) & (saturation >= 50))
+                color_support = float(np.mean(nuclear_color[patch]))
+                # Require a visible local dark-to-cytoplasm contrast. For a
+                # weakly contrasted candidate, also require purple/blue color
+                # support to avoid retaining achromatic debris.
+                if (local_contrast < MIN_NUCLEUS_LAB_CONTRAST or
+                        (local_contrast < 20 and
+                         color_support < MIN_HSV_NUCLEUS_COLOR_SUPPORT)):
+                    rejected_weak_signal += 1
+                    continue
                 nuclei[yy,xx]=next_label
                 seed_counts[next_label]=int(seed_count)
                 if seed_count>1:
@@ -1750,6 +1778,7 @@ def segment_image(preprocessed, image_id=None):
             'Rejected Small Nucleus Count':rejected_small,
             'Rejected Large Nucleus Count':rejected_large,
             'Rejected Ring Nucleus Count':rejected_ring,
+            'Rejected Weak Color/Contrast Count':rejected_weak_signal,
             'Cell Watershed Mode':'edge-guided' if USE_EDGE_GUIDED_CELL_WATERSHED else 'body-distance',
         },
     }
