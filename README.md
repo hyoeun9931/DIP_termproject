@@ -33,3 +33,14 @@ watershed 스크립트:
 - `masks/abnorm/train_prediction/`: abnormal 예측 마스크 중 016과 017만 보관합니다. 예측 마스크는 정답과 같은 2048×1536 원본 해상도로 맞췄습니다.
 
 각 세포별 `cell` 마스크는 핵을 포함한 세포 외곽이고, `cytoplasm` 마스크는 해당 외곽에서 핵 영역을 뺀 영역입니다. 선택한 정상 reference와 예측은 동일한 원본 이미지 좌표에서 평가했습니다. abnormal 예측은 1400×1050 분석 마스크를 최근접 보간으로 2048×1536 원본 크기에 맞춰 reference와 비교할 수 있게 했습니다.
+
+## 특징 추출과 분할 평가
+
+- `extract_and_evaluate_masks.py`: 선택한 reference 마스크의 핵 면적·둘레·원형도·종횡비, 세포질 면적·N/C 비율을 계산하고 예측 분할의 Dice·IoU, 매칭·누락·오검출 수를 저장합니다.
+- `reports/reference_cell_features.csv`: 세포별 특징값, 단위, 계산 불가 사유 및 임시 규칙 결과입니다.
+- `reports/feature_distribution_summary.csv`와 `reports/team_feature_summary.md`: 정상·abnormal 특징 분포와 예시입니다.
+- `reports/mask_quality_metrics.csv`: 이미지별 분할 품질 평가입니다.
+- `reports/mask_overlays/`: reference 경계(초록)와 예측 경계(자홍)를 원본 이미지에 겹친 확인용 이미지입니다.
+- `docs/feature_calculation.md`: 계산 방법, 임시 규칙의 한계와 검토 상태를 기록합니다.
+
+세포질 경계는 김승연을 포함한 팀의 육안 검토가 아직 완료되지 않았으므로 보고서에서 검토 대기로 표시했습니다. 규칙은 `핵 면적 > 1800 px² AND N/C > 0.15`인 탐색용 예시일 뿐이며, 네 명의 합의나 의학적 기준으로 확인되지 않았습니다. 결과 상태는 진단명이 아닙니다.
