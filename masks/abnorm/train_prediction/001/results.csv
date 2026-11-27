@@ -1,4 +1,0 @@
-﻿image,id,center_x,center_y,nucleus_area_px2,circularity,width_px,height_px,elongation,local_contrast,nc_nucleus_over_cytoplasm,cell_boundary_status,cell_area_px2,cell_circularity,cell_aspect_ratio,cytoplasm_area_px2,nucleus_lab_l,cytoplasm_lab_l,nearby_background_lab_l,nucleus_hsv_h,nucleus_hsv_s,cytoplasm_hsv_h,cytoplasm_hsv_s,cytoplasm_minus_nucleus_l,nearby_minus_cytoplasm_l,result,source
-001.bmp,1,1661,679,2898.6,0.663,71.7,71.7,1.0,20.0,0.308,자동 추정,12647.1,0.728,1.128,9901.6,141.0,172.0,195.0,153.0,61.0,152.0,39.0,31.0,23.0,규칙 충족,자동 추정
-001.bmp,2,1305,607,3114.7,0.62,61.4,79.0,1.286,31.0,0.769,자동 추정,7317.6,0.781,1.058,4258.5,111.0,178.0,176.0,137.0,69.0,140.0,29.0,67.0,-2.0,규칙 충족,자동 추정
-001.bmp,3,1075,494,4105.5,0.86,70.2,80.5,1.146,23.0,0.122,자동 추정,38680.7,0.781,1.2,34936.8,99.0,149.0,193.0,173.0,141.0,172.0,117.0,50.0,44.0,규칙 미충족,자동 추정

@@ -1,3 +1,0 @@
-﻿image,id,center_x,center_y,nucleus_area_px2,circularity,width_px,height_px,elongation,local_contrast,nc_nucleus_over_cytoplasm,cell_boundary_status,cell_area_px2,cell_circularity,cell_aspect_ratio,cytoplasm_area_px2,nucleus_lab_l,cytoplasm_lab_l,nearby_background_lab_l,nucleus_hsv_h,nucleus_hsv_s,cytoplasm_hsv_h,cytoplasm_hsv_s,cytoplasm_minus_nucleus_l,nearby_minus_cytoplasm_l,result,source
-ROI_019_00491.png,1,430,295,1913.5,0.427,85.0,62.0,1.371,27.0,0.392,자동 추정,6966.5,0.524,1.088,5133.0,98.0,138.0,144.0,149.0,151.0,144.0,109.0,40.0,6.0,규칙 충족,자동 추정
-ROI_019_00491.png,2,486,203,1778.5,0.341,58.0,59.0,1.017,14.0,,불명확,4826.0,0.664,1.025,3070.0,95.0,133.0,148.0,132.0,142.0,139.0,119.0,38.0,15.0,판정 보류,자동 추정
