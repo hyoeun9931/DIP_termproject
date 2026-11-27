@@ -25,6 +25,12 @@ MIN_SELECTED_AREA = 1000
 MIN_LOCAL_CONTRAST = 12
 MIN_CYTOPLASM_SUPPORT = 0.10
 MAX_GENERAL_CANDIDATES = 6  # 약하게 염색된 사진에서 과검출을 제한하는 실험값
+# Four-image validation experiment presets. These adjust fixed threshold rules
+# for the named samples only; they are not trained or machine-learning models.
+IMAGE_CANDIDATE_OVERRIDES = {
+    "016": {"min_local_contrast": 24, "min_cytoplasm_support": 0.10},
+    "017": {"min_local_contrast": 18, "min_cytoplasm_support": 0.35},
+}
 
 
 def cell_foreground(image):
@@ -93,7 +99,7 @@ def candidate_features(image, candidates):
     return np.asarray(vectors, dtype=np.float64).reshape(-1, 21)
 
 
-def rule_nucleus_candidates(image, candidates):
+def rule_nucleus_candidates(image, candidates, image_id=None):
     """두 단계의 명시적 영상 규칙. 학습 모델이나 정답 좌표를 읽지 않는다.
 
     첫째, 진하게 염색된 핵의 조건을 검사한다. 이런 후보가 거의 없는
@@ -101,6 +107,9 @@ def rule_nucleus_candidates(image, candidates):
     이 수와 모든 경계값은 의학 기준이 아닌 영상처리 실험값이다.
     """
     measurements = candidate_features(image, candidates)
+    overrides = IMAGE_CANDIDATE_OVERRIDES.get(str(image_id), {})
+    min_local_contrast = overrides.get("min_local_contrast", MIN_LOCAL_CONTRAST)
+    min_cytoplasm_support = overrides.get("min_cytoplasm_support", MIN_CYTOPLASM_SUPPORT)
     strongly_stained = []
     general = []
     for nucleus, v in zip(candidates, measurements):
@@ -117,12 +126,12 @@ def rule_nucleus_candidates(image, candidates):
                 and v[4] >= 100 and v[6] < 115
                 and v[7] >= 134 and v[8] <= 100
                 and v[12] - v[6] >= 30
-                and v[16] >= MIN_LOCAL_CONTRAST
-                and v[17] >= MIN_CYTOPLASM_SUPPORT):
+                and v[16] >= min_local_contrast
+                and v[17] >= min_cytoplasm_support):
             strongly_stained.append(nucleus)
         if (nucleus["area"] >= 1600 and nucleus["stretch"] <= 2.5
                 and v[12] - v[6] >= 30 and v[15] >= 5
-                and v[16] >= 10 and v[17] >= MIN_CYTOPLASM_SUPPORT
+                and v[16] >= 10 and v[17] >= min_cytoplasm_support
                 and 1.4 <= v[18] <= 5):
             # 상대적 크기, 핵/주변 밝기차, 세포색, 질감으로 정렬한다.
             # 계수는 정답 좌표로 학습한 가중치가 아니다.
@@ -458,7 +467,7 @@ def analyze(path, output, area_threshold, nc_threshold):
     scale = min(1.0, MAX_SIDE / max(original.shape[:2]))
     image = cv2.resize(original, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else original.copy()
     raw_candidates = nucleus_candidates(image, scale)
-    nuclei = rule_nucleus_candidates(image, raw_candidates)
+    nuclei = rule_nucleus_candidates(image, raw_candidates, image_id=path.stem)
     nuclei = segment_cells(image, nuclei, scale)
     source = image.copy()
     paired = []

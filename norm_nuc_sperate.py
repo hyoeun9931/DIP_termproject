@@ -145,6 +145,12 @@ REFERENCE_IMAGE_DIR = BASE_DIR / 'reference_images'
 NUCLEUS_DISTANCE_SIGMA = 1.0
 NUCLEUS_PEAK_PROMINENCE = 1.5
 MIN_NUCLEUS_SEED_AREA = 1
+# Four-image validation experiment presets. These are hand-tuned classic
+# image-processing parameters for the named samples only, not learned weights.
+IMAGE_SEGMENTATION_OVERRIDES = {
+    "009": {"min_nucleus_area": 300, "peak_prominence": 10.0},
+    "019": {"min_nucleus_area": 300, "peak_prominence": 10.0},
+}
 USE_EDGE_GUIDED_CELL_WATERSHED = False
 CELL_EDGE_WEIGHT = 0.65
 
@@ -978,7 +984,8 @@ def process_one(
         tick = time.perf_counter()
 
         segmented = segment_image(
-            preprocessed
+            preprocessed,
+            image_id=path.stem,
         )
 
         summary["Segmentation Time (s)"] = (
@@ -1622,7 +1629,7 @@ def main():
 
 
 
-def segment_image(preprocessed):
+def segment_image(preprocessed, image_id=None):
     gray=preprocessed['gray']
     body=preprocessed['cell_body_mask']>0
     body_labels=measure.label(body)
@@ -1633,6 +1640,9 @@ def segment_image(preprocessed):
     seed_counts={}
     split_labels=set()
     selem=morphology.disk(MORPH_DISK_RADIUS)
+    overrides=IMAGE_SEGMENTATION_OVERRIDES.get(str(image_id), {})
+    min_nucleus_area=overrides.get('min_nucleus_area', MIN_NUCLEUS_AREA)
+    peak_prominence=overrides.get('peak_prominence', NUCLEUS_PEAK_PROMINENCE)
     inner_disk=morphology.disk(NUCLEUS_RING_INNER_RADIUS)
     outer_disk=morphology.disk(NUCLEUS_RING_OUTER_RADIUS)
     height,width=gray.shape
@@ -1656,7 +1666,7 @@ def segment_image(preprocessed):
         candidates=ndi.binary_fill_holes(candidates)&local_body
         candidate_labels=measure.label(candidates)
         for prop in measure.regionprops(candidate_labels):
-            if prop.area<MIN_NUCLEUS_AREA:
+            if prop.area<min_nucleus_area:
                 rejected_small+=1
                 continue
             # 합쳐진 큰 덩어리도 분리 전에는 면적 상한으로 버리지 않습니다.
@@ -1666,7 +1676,7 @@ def segment_image(preprocessed):
             distance=ndi.distance_transform_edt(component)
             smooth=ndi.gaussian_filter(distance,NUCLEUS_DISTANCE_SIGMA)
             smooth[~component]=0
-            maxima=morphology.h_maxima(smooth,NUCLEUS_PEAK_PROMINENCE).astype(bool)&component
+            maxima=morphology.h_maxima(smooth,peak_prominence).astype(bool)&component
             maxima=morphology.remove_small_objects(maxima,min_size=MIN_NUCLEUS_SEED_AREA)
             markers,seed_count=ndi.label(maxima,structure=np.ones((3,3),np.uint8))
             if seed_count==0:
@@ -1683,7 +1693,7 @@ def segment_image(preprocessed):
                     continue
                 local_piece=pieces==label
                 area=int(local_piece.sum())
-                if area<MIN_NUCLEUS_AREA:
+                if area<min_nucleus_area:
                     rejected_small+=1
                     continue
                 if area>MAX_NUCLEUS_AREA:

@@ -11,6 +11,7 @@ import argparse
 import csv
 import math
 import re
+import shutil
 from pathlib import Path
 
 import cv2
@@ -27,6 +28,7 @@ IMAGE_STEMS = {"normal": ["009", "019"], "abnormal": ["016", "017"]}
 LABEL_DIR = {"normal": "norm", "abnormal": "abnorm"}
 AREA_THRESHOLD_PX2 = 1800.0
 NC_THRESHOLD = 0.15
+INSTANCE_MATCH_IOU_THRESHOLD = 0.50
 RULE_SOURCE = "기존 abnorm 코드의 탐색값; 네 명의 합의/의학 기준으로 검증되지 않음"
 
 
@@ -178,7 +180,8 @@ def score_union(reference: list[np.ndarray], predicted: list[np.ndarray], shape:
     return dice, iou
 
 
-def match_instances(reference: list[np.ndarray], predicted: list[np.ndarray]) -> dict:
+def match_instances(reference: list[np.ndarray], predicted: list[np.ndarray],
+                    minimum_iou: float = INSTANCE_MATCH_IOU_THRESHOLD) -> dict:
     matrix = np.zeros((len(reference), len(predicted)), dtype=np.float64)
     for i, gt in enumerate(reference):
         for j, pred in enumerate(predicted):
@@ -189,13 +192,16 @@ def match_instances(reference: list[np.ndarray], predicted: list[np.ndarray]) ->
     pairs = []
     if matrix.size:
         gt_idx, pred_idx = linear_sum_assignment(1.0 - matrix)
-        pairs = [(int(i), int(j), float(matrix[i, j])) for i, j in zip(gt_idx, pred_idx) if matrix[i, j] > 0]
+        pairs = [(int(i), int(j), float(matrix[i, j]))
+                 for i, j in zip(gt_idx, pred_idx)
+                 if matrix[i, j] >= minimum_iou]
     matched = len(pairs)
     return {
         "matched": matched,
         "missed": max(0, len(reference) - matched),
         "false_positive": max(0, len(predicted) - matched),
-        "mean_matched_iou_per_reference": sum(x[2] for x in pairs) / max(1, len(reference)) if reference else None,
+        "matched_instance_mean_iou": sum(x[2] for x in pairs) / matched if matched else None,
+        "matched_instance_mean_iou_per_reference": sum(x[2] for x in pairs) / max(1, len(reference)) if reference else None,
     }
 
 
@@ -206,16 +212,24 @@ def save_prediction_instances(label: str, stem: str, instances: dict[str, list[t
     else:
         folder = MASK_ROOT / "abnorm" / "train_prediction" / stem / "per_cell"
         prefixes = {"nucleus": f"{stem}_nucleus_", "cell": f"{stem}_cell_", "cytoplasm": f"{stem}_cytoplasm_"}
+    shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True, exist_ok=True)
     for kind, items in instances.items():
         for identity, mask in items:
             safe = re.sub(r"[^A-Za-z0-9_-]+", "_", identity)
             cv2.imwrite(str(folder / f"{prefixes[kind]}{safe}.png"), binary_png(mask))
+        if items:
+            union = union_masks([mask for _, mask in items], items[0][1].shape)
+        else:
+            union = np.zeros(instances["nucleus"][0][1].shape, dtype=bool) if instances["nucleus"] else None
+        if union is not None:
+            suffix = "union" if label == "normal" else "mask"
+            cv2.imwrite(str(folder.parent / f"{stem}_{kind}_{suffix}.png"), binary_png(union))
 
 
 def predict_normal(path: Path) -> tuple[dict, tuple[int, int]]:
     image = norm.read_image(path)
-    segmented = norm.segment_image(norm.preprocess_image(image))
+    segmented = norm.segment_image(norm.preprocess_image(image), image_id=path.stem)
     nuclei = segmented["labeled_nuclei"]
     cells = segmented["segmented_cells"]
     output = {"nucleus": [], "cell": [], "cytoplasm": []}
@@ -236,7 +250,9 @@ def predict_abnormal(path: Path) -> tuple[dict, tuple[int, int]]:
     source_shape = original.shape[:2]
     scale = min(1.0, abnorm.MAX_SIDE / max(source_shape))
     work = cv2.resize(original, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else original.copy()
-    candidates = abnorm.rule_nucleus_candidates(work, abnorm.nucleus_candidates(work, scale))
+    candidates = abnorm.rule_nucleus_candidates(
+        work, abnorm.nucleus_candidates(work, scale), image_id=path.stem
+    )
     nuclei = abnorm.segment_cells(work, candidates, scale)
     output = {"nucleus": [], "cell": [], "cytoplasm": []}
     target_size = (source_shape[1], source_shape[0])
@@ -290,7 +306,7 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         path.write_text("", encoding="utf-8")
         return
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -335,7 +351,11 @@ def run(args) -> None:
             save_prediction_instances(label, stem, preds)
             reference_counts = {k: len(v) for k, v in refs.items()}
             prediction_counts = {k: len(v) for k, v in preds.items()}
-            row_out = {"label": label, "image_id": stem}
+            params = (norm.IMAGE_SEGMENTATION_OVERRIDES.get(stem, {}) if label == "normal"
+                      else abnorm.IMAGE_CANDIDATE_OVERRIDES.get(stem, {}))
+            row_out = {"label": label, "image_id": stem,
+                       "instance_match_iou_threshold": INSTANCE_MATCH_IOU_THRESHOLD,
+                       "image_specific_parameters": "; ".join(f"{k}={v}" for k, v in params.items())}
             for kind in ("nucleus", "cell", "cytoplasm"):
                 ref_masks, pred_masks = refs[kind], [m for _, m in preds[kind]]
                 if any(m.shape != shape for m in ref_masks + pred_masks):
@@ -350,7 +370,8 @@ def run(args) -> None:
                     f"false_positive_{kind}_count": matched["false_positive"],
                     f"{kind}_union_dice": dice,
                     f"{kind}_union_iou": iou,
-                    f"{kind}_instance_mean_iou_per_reference": matched["mean_matched_iou_per_reference"],
+                    f"{kind}_instance_mean_iou": matched["matched_instance_mean_iou"],
+                    f"{kind}_instance_mean_iou_per_reference": matched["matched_instance_mean_iou_per_reference"],
                 })
             row_out["cytoplasm_review_status"] = "김승연 포함 팀 육안 검토 대기"
             eval_rows.append(row_out)
